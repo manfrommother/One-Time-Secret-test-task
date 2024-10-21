@@ -6,7 +6,7 @@ import bcrypt
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime, timedelta
 
-app = FastAPI
+app = FastAPI()
 
 client = AsyncIOMotorClient("mongodb://mongodb:27017")
 db = client.secrets_db
@@ -29,7 +29,7 @@ async def get_secret(secret_key: str):
         raise HTTPException(status_code=404, detail='Secret not found')
     return secret
 
-app.post('/generate', response_model=SecretResponse)
+@app.post('/generate', response_model=SecretResponse)
 async def generate_secret(secret_data: SecretCreate):
     """
     Generate a new secret and return a secret key.
@@ -41,11 +41,11 @@ async def generate_secret(secret_data: SecretCreate):
         SecretResponse: The generated secret key.
     """
     secret_key = secrets.token_urlsafe(16)
-    hashed_secret = bcrypt.hashpw(secret_data.passphrase.encode(), bcrypt.gensalt())
+    hashed_secret = bcrypt.hashpw(secret_data.secret.encode(), bcrypt.gensalt())
     hashed_passphrase = bcrypt.hashpw(secret_data.passphrase.encode(), bcrypt.gensalt() )
 
     expiration_date = None
-    if secret_data.tll:
+    if secret_data.ttl:
         expiration_date = datetime.utcnow() + timedelta(seconds=secret_data.ttl)
 
     await secrets_collection.insert_one({
@@ -58,7 +58,7 @@ async def generate_secret(secret_data: SecretCreate):
     return SecretResponse(secret_key=secret_key)
 
 @app.post('/secrets/{secret_key}', response_model=str)
-async def retrieve_secret(secret_key: str, secret_retrive: SecretRetrieve):
+async def retrieve_secret(secret_key: str, secret_retrieve: SecretRetrieve):
     """
     Retrieve a secret using the secret key and passphrase.
 
@@ -71,7 +71,7 @@ async def retrieve_secret(secret_key: str, secret_retrive: SecretRetrieve):
     """
     secret = await get_secret(secret_key)
 
-    if bcrypt.checkpw(secret_retrive.passphrase.encode(), secret['passphrase']):
+    if bcrypt.checkpw(secret_retrieve.passphrase.encode(), secret['passphrase']):
         if secret.get('expiration_date') and datetime.utcnow() > secret['expiration_date']:
             await secrets_collection.delete_one({'secret_key': secret_key})
             raise HTTPException(status_code=404, detail='Secret has expired')
