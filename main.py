@@ -5,6 +5,7 @@ import secrets
 import bcrypt
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime, timedelta
+import base64
 
 app = FastAPI()
 
@@ -22,6 +23,9 @@ class SecretResponse(BaseModel):
 
 class SecretRetrieve(BaseModel):
     passphrase: str
+
+def xor_encrypt_decrypt(text: str, key: str) -> str:
+    return ''.join(chr(ord(c) ^ ord(k)) for c, k in zip(text, key * (len(text) // len(key) + 1)))
 
 async def get_secret(secret_key: str):
     secret = await secrets_collection.find_one({"secret_key": secret_key})
@@ -41,8 +45,9 @@ async def generate_secret(secret_data: SecretCreate):
         SecretResponse: The generated secret key.
     """
     secret_key = secrets.token_urlsafe(16)
-    hashed_secret = bcrypt.hashpw(secret_data.secret.encode(), bcrypt.gensalt())
-    hashed_passphrase = bcrypt.hashpw(secret_data.passphrase.encode(), bcrypt.gensalt() )
+    encrypted_secret = xor_encrypt_decrypt(secret_data.secret, secret_data.passphrase)
+    encoded_secret = base64.b64encode(encrypted_secret.encode()).decode()
+    hashed_passphrase = bcrypt.hashpw(secret_data.passphrase.encode(), bcrypt.gensalt())
 
     expiration_date = None
     if secret_data.ttl:
@@ -50,7 +55,7 @@ async def generate_secret(secret_data: SecretCreate):
 
     await secrets_collection.insert_one({
         'secret_key': secret_key,
-        'secret': hashed_secret,
+        'secret': encoded_secret,
         'passphrase': hashed_passphrase,
         'expiration_date': expiration_date
     })
@@ -76,9 +81,11 @@ async def retrieve_secret(secret_key: str, secret_retrieve: SecretRetrieve):
             await secrets_collection.delete_one({'secret_key': secret_key})
             raise HTTPException(status_code=404, detail='Secret has expired')
         
-        decrypted_secret = bcrypt.hashpw(b'', secret['secret'])[29:]
+        encoded_secret = secret['secret']
+        encrypted_secret = base64.b64decode(encoded_secret).decode()
+        decrypted_secret = xor_encrypt_decrypt(encrypted_secret, secret_retrieve.passphrase)
         await secrets_collection.delete_one({'secret_key': secret_key})
-        return decrypted_secret.decode()
+        return decrypted_secret
     else:
         raise HTTPException(status_code=403, detail='Invalid passphrase')
 
